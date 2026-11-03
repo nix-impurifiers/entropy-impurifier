@@ -38,3 +38,22 @@ that the tests cover Sabayon boot and desktop behavior.
 Run `nix flake check -L` for native QEMU tests. Original code is MIT licensed;
 see [THIRD_PARTY.md](THIRD_PARTY.md) for native runtime notices and compatibility
 patches.
+
+## Native payloads and bundled clients
+
+`makeNativePackage { name; version; payload; dependencies?; ... }` emits a
+native Entropy package from a producer-prepared filesystem tree, with activation
+triggers disabled and no implicit Nix requirement. The producer supplies a
+working target layout; this does not relocate binaries. The VM checks native
+installation, upgrade and removal with actual Portage VDB integration before
+installing the engine, then executes the installed static payload in an isolated
+root without `/nix`. The native manager fixture uses Gentoo and SDK host tools;
+this does not claim a full Sabayon boot without Nix.
+
+`makeRuntimePackage` optionally accepts `bundledNixStore` and
+`bundledNixNotices` for a static ELF client with upstream notices. Bundling omits
+the default Nix dependency; Python remains required. Compatible external clients
+take precedence, explicit `IMPURIFIER_NIX_STORE` disables fallback, and failed
+mutations are never retried through another client. A bundled variant repeats
+the original lifecycle suite with an incompatible external candidate. The Nix
+provider/installer remains deferred.

@@ -64,20 +64,19 @@ let
       '';
   makeRuntimePackage =
     {
-      nixDependency ? "sys-apps/nix",
+      bundledNixStore ? null,
+      bundledNixNotices ? [ ],
+      nixDependency ? (if bundledNixStore == null then "sys-apps/nix" else null),
       pythonDependency ? "dev-lang/python",
       version ? core.runtimeVersion,
     }:
     buildPackage {
       name = "entropy-impurifier";
       inherit version;
-      dependencies = [
-        nixDependency
-        pythonDependency
-      ];
+      dependencies = lib.optional (nixDependency != null) nixDependency ++ [ pythonDependency ];
       trigger = activationTrigger;
       payload = pkgs.runCommand "entropy-runtime" { } ''
-        cp -r ${core.makeRuntimeTree { }} $out
+        cp -r ${core.makeRuntimeTree { inherit bundledNixStore bundledNixNotices; }} $out
         chmod -R u+w $out
         install -Dm755 ${../src/activate.py} $out/usr/sbin/entropy-impurifier-activate
         install -Dm755 ${../src/adapter.py} $out/usr/sbin/entropy-impurifier
@@ -130,6 +129,7 @@ in
     makeRuntimePackage
     makePackageArtifact
     ;
+  makeNativePackage = args: buildPackage (args // { trigger = ""; });
   runtimePackage = makeRuntimePackage { };
   makeNetPackage = args: makePackageArtifact (args // { offline = false; });
   makeOfflinePackage = args: makePackageArtifact (args // { offline = true; });

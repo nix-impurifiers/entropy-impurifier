@@ -4,6 +4,7 @@
   impurifier,
   tools,
   coreSrc,
+  bundled ? false,
 }:
 let
   stage3 = import ./gentoo.nix { inherit pkgs; };
@@ -70,13 +71,32 @@ let
     nixDependency = "app-impurifiers/nix-provider";
     pythonDependency = "app-impurifiers/python-provider";
   };
-  package = impurifier.buildPackage {
-    name = "native-marker";
-    version = "1";
-    payload =
-      pkgs.runCommand "native-entropy-payload" { }
-        "mkdir -p $out/usr/share/entropy-vm; echo native > $out/usr/share/entropy-vm/marker";
+  nativeProof = pkgs.pkgsStatic.stdenv.mkDerivation {
+    name = "native-static-proof";
+    dontUnpack = true;
+    buildPhase = ''
+      cat > proof.c <<'C'
+      #include <stdio.h>
+      int main(void) { puts("Hello from native payload"); return 0; }
+      C
+      $CC proof.c -o proof
+    '';
+    installPhase = "mkdir -p $out/bin; cp proof $out/bin/";
   };
+  nativePackage =
+    version:
+    impurifier.makeNativePackage {
+      name = "native-marker";
+      inherit version;
+      payload = pkgs.runCommand "native-entropy-payload-${version}" { } ''
+        mkdir -p $out/usr/share/entropy-vm $out/usr/libexec/native-entropy
+        echo native > $out/usr/share/entropy-vm/marker
+        echo ${version} > $out/usr/share/entropy-vm/version
+        cp ${nativeProof}/bin/proof $out/usr/libexec/native-entropy/proof
+      '';
+    };
+  package = nativePackage "1";
+
 in
 pkgs.testers.runNixOSTest {
   name = "entropy-native-contract";
@@ -118,9 +138,19 @@ pkgs.testers.runNixOSTest {
     machine.succeed("mkdir -p /srv/gentoo/packages; cp ${package}/app-impurifiers/*.tbz2 /srv/gentoo/packages/; chmod u+w /srv/gentoo/packages/*")
     machine.succeed("timeout 60 " + root + "${tools.package}/bin/equo install /packages/app-impurifiers:native-marker-1~0.tbz2 < /dev/null > /srv/gentoo/tmp/install.log 2>&1 || { cat /srv/gentoo/tmp/install.log; exit 1; }")
     machine.succeed("grep native /srv/gentoo/usr/share/entropy-vm/marker; test -d /srv/gentoo/var/db/pkg/app-impurifiers/native-marker-1")
+    machine.fail(root + "/bin/sh -c 'command -v nix-store'")
+    machine.succeed("mkdir -p /srv/native; cp /srv/gentoo/usr/libexec/native-entropy/proof /srv/native/proof; chroot /srv/native /proof | grep Hello; test ! -e /srv/native/nix")
+    machine.succeed("cp ${nativePackage "2"}/app-impurifiers/*.tbz2 /srv/gentoo/packages/; chmod u+w /srv/gentoo/packages/*")
+    machine.succeed("timeout 60 " + root + "${tools.package}/bin/equo install /packages/app-impurifiers:native-marker-2~0.tbz2 < /dev/null > /srv/gentoo/tmp/native-upgrade.log 2>&1 || { cat /srv/gentoo/tmp/native-upgrade.log; exit 1; }")
+    machine.succeed("grep '^2$' /srv/gentoo/usr/share/entropy-vm/version; test -d /srv/gentoo/var/db/pkg/app-impurifiers/native-marker-2")
     machine.succeed("timeout 60 " + root + "${tools.package}/bin/equo remove app-impurifiers/native-marker < /dev/null > /srv/gentoo/tmp/remove.log 2>&1 || { cat /srv/gentoo/tmp/remove.log; exit 1; }")
-    machine.succeed("test ! -e /srv/gentoo/usr/share/entropy-vm/marker")
-    machine.succeed("mkdir -p /srv/gentoo/opt/nix /opt/nix /srv/gentoo/var/lib/entropy-impurifier /var/lib/entropy-impurifier; mount --bind /opt/nix /srv/gentoo/opt/nix; mount --bind /var/lib/entropy-impurifier /srv/gentoo/var/lib/entropy-impurifier; ln -s ${pkgs.nix}/bin/nix-store /srv/gentoo/usr/bin/nix-store; ln -s ${tools.package}/bin/equo /srv/gentoo/usr/bin/equo")
+    machine.succeed("test ! -e /srv/gentoo/usr/share/entropy-vm/marker && test ! -e /srv/gentoo/usr/libexec/native-entropy/proof")
+    machine.succeed("mkdir -p /srv/gentoo/opt/nix /opt/nix /srv/gentoo/var/lib/entropy-impurifier /var/lib/entropy-impurifier; mount --bind /opt/nix /srv/gentoo/opt/nix; mount --bind /var/lib/entropy-impurifier /srv/gentoo/var/lib/entropy-impurifier; ln -s ${
+      if bundled then
+        pkgs.writeShellScript "incompatible-nix-store" "echo incompatible; exit 1"
+      else
+        "${pkgs.nix}/bin/nix-store"
+    } /srv/gentoo/usr/bin/nix-store; ln -s ${tools.package}/bin/equo /srv/gentoo/usr/bin/equo")
     def native_install(artifact, pattern="*.tbz2", expect_success=True, flags="", adapter=False):
         machine.succeed("rm -rf /srv/gentoo/packages/*; cp " + artifact + "/app-impurifiers/" + pattern + " /srv/gentoo/packages/; chmod u+w /srv/gentoo/packages/*")
         archive = machine.succeed("ls /srv/gentoo/packages/*.tbz2").strip().removeprefix("/srv/gentoo")

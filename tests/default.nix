@@ -4,6 +4,7 @@
   tools,
   impurifier,
   coreSrc,
+  bundled ? false,
 }:
 {
   native-package = impurifier.buildPackage {
@@ -14,6 +15,7 @@
         "mkdir -p $out/usr/share/entropy-vm; echo native > $out/usr/share/entropy-vm/marker";
   };
   native-vm = import ./vm.nix {
+    inherit bundled;
     inherit
       pkgs
       impurifier

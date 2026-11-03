@@ -22,10 +22,33 @@
     {
       formatter = pkgs.nixfmt-tree;
       packages.default = impurifier.tools.package;
-      checks = import ../../../tests {
-        inherit pkgs impurifier;
-        coreSrc = inputs.impurifier;
-        tools = impurifier.tools;
-      };
+      checks =
+        (import ../../../tests {
+          inherit pkgs impurifier;
+          coreSrc = inputs.impurifier;
+          tools = impurifier.tools;
+        })
+        // {
+          bundled-vm =
+            (import ../../../tests {
+              inherit pkgs;
+              coreSrc = inputs.impurifier;
+              tools = impurifier.tools;
+              bundled = true;
+              impurifier = impurifier // {
+                makeRuntimePackage =
+                  args:
+                  impurifier.makeRuntimePackage (
+                    args
+                    // {
+                      bundledNixStore = "${
+                        import (inputs.impurifier + "/tests/static-nix.nix") { inherit pkgs; }
+                      }/bin/nix-store";
+                      bundledNixNotices = [ "${pkgs.nix.src}/COPYING" ];
+                    }
+                  );
+              };
+            }).native-vm;
+        };
     };
 }
